@@ -229,6 +229,8 @@ int main(){
     bool showRadio=true;
     bool isStarted = false;
 
+    bool valueNotFound=false;
+
     
 
     
@@ -245,6 +247,7 @@ int main(){
         searchingValue="";
         counted_values=0;
         found_index=-1;
+        valueNotFound=false;
 
 
         threadValue = std::stoi(threadValueString);
@@ -333,57 +336,70 @@ int main(){
         
     });
 
-
-
-
-    
-
     auto container = Container::Vertical({
         Renderer([&]{
-            return vbox({
-                text("Система поиска значения по хэшу"),
-                text("Alphabet: abcdefghijklmnopqrstyvwxyz"),
-                
-            });
-        }),
-        Maybe({
+            return text("Searching the value based on hash");
+        })|hcenter,
+        Container::Vertical({
+            Renderer([&]{
+                    return vbox({
+                        text("Data"),
+                    });
+            })|hcenter,
+            Renderer([&]{
+                return separator();
+            }),
+            Renderer([&]{
+                return text("Alphabet: abcdefghijklmnopqrstyvwxyz");
+            }),
+            
+            Maybe({
+                Container::Horizontal({
+                    Renderer([&]{return text("Select used hash function: ");})|vcenter,
+                    Radiobox(&hashFunctionSelect, &hashFunctionSelected)|border
+                    
+                }),   
+            }, &showRadio), 
             Container::Horizontal({
-                Renderer([&]{return text("Select used hash function: ");})|vcenter,
-                Radiobox(&hashFunctionSelect, &hashFunctionSelected)|border
-                
-            }),   
-        }, &showRadio), 
-        Container::Horizontal({
-            Renderer([&]{return text("Enter the number of threads to use ");})|vcenter,
-            Input(&threadValueString)|border,
-        }),
-        Container::Horizontal({
+                Renderer([&]{return text("Enter the number of threads to use ");})|vcenter,
+                Input(&threadValueString)|border,
+            }),
+            Container::Horizontal({
+                Renderer([&]{
+                        return text("Enter the hash value into input");
+                    })|vcenter,
+                Input(&searchingValue)|border,
+            }),
+        })|border,
+        button|center,
+        Container::Vertical({
             Renderer([&]{
-                return text("Enter the hash value into input");
-            })|vcenter,
-            Input(&searchingValue)|border,
-        }),
-        
-        button,
-        Renderer([&]{
-            return paragraph(results);
-        }),
-        Maybe({
+                return text("Working data");
+            })|hcenter,
             Renderer([&]{
-                std::chrono::duration<float> between = std::chrono::high_resolution_clock::now() - start;
-                if(found){
-                    between = end - start;
-                }
-                
-                return text("Time from start: " + std::to_string(between.count()));
-            })
-        }, &isStarted),
-        Renderer([&]{
-            return hbox({
-                text("I've counted " + std::to_string(counted_values.load()))|vcenter,
-                gauge(static_cast<float>(counted_values.load())/data.size())|border
-            }); 
-        }),
+                return separator();
+            }),
+            Renderer([&]{
+                return paragraph(results);
+            }),
+            Maybe({
+                Renderer([&]{
+                    std::chrono::duration<float> between = std::chrono::high_resolution_clock::now() - start;
+                    if(found){
+                        between = end - start;
+                    }
+                    
+                    return text("Time from start: " + std::to_string(between.count()));
+                })
+            }, &isStarted),
+            Renderer([&]{
+                if(counted_values.load()==data.size()) valueNotFound=true;
+                return hbox({
+                    text("I've counted " + std::to_string(counted_values.load()))|vcenter,
+                    gauge(static_cast<float>(counted_values.load())/data.size())|border
+                }); 
+            }),
+        })|border,
         Maybe({
             Renderer([&]{
                 isStarted=false;
@@ -400,6 +416,8 @@ int main(){
                 
 
                 return vbox({
+                    text("Result data")|hcenter,
+                    separator(),
                     hbox({
                         text("Found value: "),
                         text(data[found_index])|bold|color(Color::BlueLight),
@@ -409,9 +427,26 @@ int main(){
                     text("Time taken: " + std::to_string(between.count())),
                 });
                                 
-            })
-        }, &showResult)
+            })|border
+        }, &showResult),
+        Maybe({
+            Renderer([&]{
+                results.clear();
+                showResult=false;
+                showRadio=true;
+                isStarted=false;
+                end = std::chrono::high_resolution_clock::now();
+                return text("Value for a hash wasn't found!");
+            })|border
+        }, &valueNotFound)
     });
+
+
+
+
+    
+
+    
 
 
     auto screen = ftxui::ScreenInteractive::Fullscreen();

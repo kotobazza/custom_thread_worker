@@ -35,16 +35,30 @@
 #include <ftxui/dom/table.hpp>
 #include <ftxui/screen/terminal.hpp>
 #include <cmath>
+
+#include <ftxui/component/component.hpp> // Для использования Button и Text
+#include <ftxui/component/component_options.hpp>
+#include <iostream>
+#include <vector>
+#include <cmath> // Для математических вычислений
+#include <mutex> // Для защиты доступа к строке результатов
+#include <thread> // Для использования std::this_thread::sleep_for
+#include <chrono> // Для использования std::chrono::seconds
+
+
 class ThreadPool {
 public:
     ThreadPool(size_t threads);
     template<class F>
     auto enqueue(F&& f) -> std::future<typename std::result_of<F()>::type>;
+    void resize(size_t new_size);
     ~ThreadPool();
     bool isEmpty();
     std::atomic<int> getUsedTasks();
 
 private:
+    void workerThread();
+
     std::vector<std::thread> workers;
     std::queue<std::function<void()>> tasks;
     std::mutex queue_mutex;
@@ -53,28 +67,29 @@ private:
 };
 
 ThreadPool::ThreadPool(size_t threads) : stop(false) {
-    for (size_t i = 0; i < threads; ++i) {
-        workers.emplace_back([this] {
-            for (;;) {
-                std::function<void()> task;
-                {
-                    std::unique_lock<std::mutex> lock(this->queue_mutex);
-                    this->condition.wait(lock, [this] { return this->stop || !this->tasks.empty(); });
-                    if (this->stop && this->tasks.empty()) return;
-                    task = std::move(this->tasks.front());
-                    this->tasks.pop();
-                }
-                task();
-            }
-        });
+    resize(threads);
+}
+
+void ThreadPool::workerThread() {
+    for (;;) {
+        std::function<void()> task;
+        {
+            std::unique_lock<std::mutex> lock(this->queue_mutex);
+            this->condition.wait(lock, [this] { return this->stop || !this->tasks.empty(); });
+            if (this->stop && this->tasks.empty()) return;
+            task = std::move(this->tasks.front());
+            this->tasks.pop();
+        }
+        task();
     }
 }
 
-bool ThreadPool::isEmpty(){
+bool ThreadPool::isEmpty() {
+    std::unique_lock<std::mutex> lock(queue_mutex);
     return tasks.empty();
 }
 
-std::atomic<int> ThreadPool::getUsedTasks(){
+std::atomic<int> ThreadPool::getUsedTasks() {
     return std::atomic<int>(tasks.size());
 }
 
@@ -92,6 +107,27 @@ auto ThreadPool::enqueue(F&& f) -> std::future<typename std::result_of<F()>::typ
     return res;
 }
 
+void ThreadPool::resize(size_t new_size) {
+    std::unique_lock<std::mutex> lock(queue_mutex);
+    size_t current_size = workers.size();
+
+    if (new_size > current_size) {
+        for (size_t i = current_size; i < new_size; ++i) {
+            workers.emplace_back(&ThreadPool::workerThread, this);
+        }
+    } else if (new_size < current_size) {
+        stop = true;
+        condition.notify_all();
+        for (size_t i = new_size; i < current_size; ++i) {
+            if (workers[i].joinable()) {
+                workers[i].join();
+            }
+        }
+        workers.resize(new_size);
+        stop = false;
+    }
+}
+
 ThreadPool::~ThreadPool() {
     {
         std::unique_lock<std::mutex> lock(queue_mutex);
@@ -99,7 +135,9 @@ ThreadPool::~ThreadPool() {
     }
     condition.notify_all();
     for (std::thread &worker : workers) {
-        worker.join();
+        if (worker.joinable()) {
+            worker.join();
+        }
     }
 }
 
@@ -120,14 +158,7 @@ std::string computeHash(const std::string& input) {
 
 
 
-#include <ftxui/component/component.hpp> // Для использования Button и Text
-#include <ftxui/component/component_options.hpp>
-#include <iostream>
-#include <vector>
-#include <cmath> // Для математических вычислений
-#include <mutex> // Для защиты доступа к строке результатов
-#include <thread> // Для использования std::this_thread::sleep_for
-#include <chrono> // Для использования std::chrono::seconds
+
 using namespace ftxui;
 
 
@@ -158,10 +189,10 @@ std::string computeHashMD5(const std::string& input) {
     return ss.str();
 }
 
-
+int threadValue{5};
 
 int main(){
-    ThreadPool pool(10); 
+    ThreadPool pool(threadValue); 
 
     std::vector<std::string> data{};
     std::string alphabet = "qazxswedcvfrtgbnhyujmkiolp";
@@ -185,31 +216,48 @@ int main(){
 
     std::string searchingValue = "1115dd800feaacefdf481f1f9070374a2a81e27880f187396db67958b207cbad";
     std::string searchVal{};
+    std::string threadValueString(std::to_string(threadValue));
+    
 
-
+    std::chrono::time_point<std::chrono::system_clock> start;
+    std::chrono::time_point<std::chrono::system_clock> end;
+      
     bool found = false;
     int found_index=-1;
     std::atomic<int> counted_values=0;
-    bool showModal=false;
+    bool showResult=false;
     bool showRadio=true;
+    bool isStarted = false;
+
+    
 
     
 
 
-    auto button = ftxui::Button("Start search", [&]() {
+    auto button = ftxui::Button("Start search", [&]() {    
+        isStarted=true;    
         results.clear(); // Очищаем предыдущие результаты
         results += "Task started";
         found=false;
-        showModal=false;
+        showResult=false;
         showRadio=false;
         searchVal = searchingValue;
         searchingValue="";
         counted_values=0;
         found_index=-1;
+
+
+        threadValue = std::stoi(threadValueString);
+        if(threadValue<0) assert(2==0);
+
+        pool.resize(threadValue);
+    
+        start = std::chrono::high_resolution_clock::now();
         
 
         
         if(hashFunctionSelected==0){
+            
             pool.enqueue([&]() {
                 std::string value{};
                 
@@ -220,7 +268,7 @@ int main(){
                     value=data[i];
                     pool.enqueue([&, value, i]() {
                         if (found) {
-                            return; // Если найден, выходим из цикла
+                            return; // Если найден, выhashFunctionSelectedходим из цикла
                         }
                         std::string val = computeHashSHA256(value); // Симуляция долгого вычисления
     
@@ -230,8 +278,9 @@ int main(){
                                 std::lock_guard<std::mutex> lock(results_mutex);
                                 found_index = i;
                                 found=true;
-                                showModal=true;
+                                showResult=true;
                                 counted_values++;
+                                end = std::chrono::high_resolution_clock::now();
                                 return;
                             
                         }
@@ -244,6 +293,7 @@ int main(){
             });
         }
         else{
+            
             pool.enqueue([&]() {
                 std::string value{};
                 
@@ -264,8 +314,11 @@ int main(){
                                 std::lock_guard<std::mutex> lock(results_mutex);
                                 found_index = i;
                                 found=true;
-                                showModal=true;
+                                showResult=true;
+                                showRadio=false;
                                 counted_values++;
+                                end = std::chrono::high_resolution_clock::now();
+                                
                                 return;
                             
                         }
@@ -283,7 +336,7 @@ int main(){
 
 
 
-    auto screen = ftxui::ScreenInteractive::Fullscreen();
+    
 
     auto container = Container::Vertical({
         Renderer([&]{
@@ -295,12 +348,15 @@ int main(){
         }),
         Maybe({
             Container::Horizontal({
-                Renderer([&]{return text("Select used hash function: ");}),
-                Radiobox(&hashFunctionSelect, &hashFunctionSelected)
+                Renderer([&]{return text("Select used hash function: ");})|vcenter,
+                Radiobox(&hashFunctionSelect, &hashFunctionSelected)|border
                 
             }),   
         }, &showRadio), 
-        
+        Container::Horizontal({
+            Renderer([&]{return text("Enter the number of threads to use ");})|vcenter,
+            Input(&threadValueString)|border,
+        }),
         Container::Horizontal({
             Renderer([&]{
                 return text("Enter the hash value into input");
@@ -312,24 +368,53 @@ int main(){
         Renderer([&]{
             return paragraph(results);
         }),
+        Maybe({
+            Renderer([&]{
+                std::chrono::duration<float> between = std::chrono::high_resolution_clock::now() - start;
+                if(found){
+                    between = end - start;
+                }
+                
+                return text("Time from start: " + std::to_string(between.count()));
+            })
+        }, &isStarted),
         Renderer([&]{
             return hbox({
-                text("I've counted " + std::to_string(counted_values.load())),
+                text("I've counted " + std::to_string(counted_values.load()))|vcenter,
                 gauge(static_cast<float>(counted_values.load())/data.size())|border
             }); 
         }),
         Maybe({
             Renderer([&]{
+                isStarted=false;
+                
+                std::chrono::duration<float> between = end - start;
                 showRadio=true;
                 std::lock_guard<std::mutex> lock(results_mutex);
+                std::string computedHashString{};
                 if(0==hashFunctionSelected)
-                    return text("Found value: " + data[found_index] + ":" + computeHashSHA256(std::string(data[found_index])));
+                    computedHashString = computeHashSHA256(std::string(data[found_index]));
+                    
                 else
-                    return text("Found value: " + data[found_index] + ":" + computeHashMD5(std::string(data[found_index])));
+                    computedHashString = computeHashMD5(std::string(data[found_index]));
+                
+
+                return vbox({
+                    hbox({
+                        text("Found value: "),
+                        text(data[found_index])|bold|color(Color::BlueLight),
+                        text(":"),
+                        text(computedHashString)|bold|color(Color::GreenLight),
+                    }),
+                    text("Time taken: " + std::to_string(between.count())),
+                });
                                 
             })
-        }, &showModal),
+        }, &showResult)
     });
+
+
+    auto screen = ftxui::ScreenInteractive::Fullscreen();
 
     screen.Loop(container);
 }
