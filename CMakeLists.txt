@@ -3,8 +3,28 @@ cmake_minimum_required(VERSION 3.30)  # FetchContent_MakeAvailable is available 
 project(my_app LANGUAGES CXX)
 
 # Create application
-add_executable(my_app)
-target_sources(my_app PRIVATE src/main1.cpp)
+add_executable(my_app src/main.cpp)
+
+file(GLOB headers "src/Headers/*.h")
+foreach(file ${headers})
+  target_sources(my_app PUBLIC ${file})
+endforeach()
+
+file(GLOB sources "src/Sources/*.cpp")
+foreach(file ${sources})
+  target_sources(my_app PRIVATE ${file})
+endforeach()
+
+target_include_directories(my_app
+PUBLIC
+  ${CMAKE_CURRENT_LIST_DIR}/src/Headers
+PRIVATE
+  ${CMAKE_CURRENT_LIST_DIR}/src/Sources
+)
+
+
+
+# target_sources(my_app PRIVATE src/main1.cpp)
 
 # # Download oneTBB during configuration phase
 # include(FetchContent)
